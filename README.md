@@ -2,7 +2,7 @@
 This is a renderer implemented using the Vulkan API, which encapsulates the Vulkan interfaces.
 
 # Note
-The core code is modified from the filament renderer, for the purpose of learning vulkan.
+The core code is modified from the filament renderer.
 
 # License
 Apache 2.0
