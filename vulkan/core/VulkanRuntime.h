@@ -38,8 +38,8 @@ struct PipelineState {
 class VulkanRuntime :public NonCopyable {
 public:
 
-    VulkanRuntime(VulkanSurface& surface, const std::vector<const char *> &ppRequiredExtensions,
-                                        const std::vector<const char *> &ppRequiredValidationLayers);
+    VulkanRuntime(VulkanSurface& surface, std::vector<const char *> &ppRequiredExtensions,
+                                        std::vector<const char *> &ppRequiredValidationLayers);
     virtual ~VulkanRuntime();
 
     ShaderModel getShaderModel() const;

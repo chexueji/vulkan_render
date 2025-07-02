@@ -36,7 +36,7 @@ void windowResizeCallback(GLFWwindow *window, int width, int height)
 
 void keyInputCallback(GLFWwindow *window, int key, int scancode, int action, int mods)
 {
-	if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
+    if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
         glfwSetWindowShouldClose(window, GLFW_TRUE);
     }
 }
@@ -48,9 +48,9 @@ void cursorPositionCallback(GLFWwindow *window, double xpos, double ypos)
 
 void mouseButtonCallback(GLFWwindow *window, int button, int action, int)
 {
-	double xpos, ypos;
-	glfwGetCursorPos(window, &xpos, &ypos);
-	// VR_PRINT("Mouse Action: %d\n", action);
+    double xpos, ypos;
+    glfwGetCursorPos(window, &xpos, &ypos);
+    // VR_PRINT("Mouse Action: %d\n", action);
 }
 
 std::vector<uint8_t> readShaderBinary(const std::string filename)
@@ -104,26 +104,30 @@ uint32_t getTextureMipmapLevels(uint32_t texWidth, uint32_t texHeight)
 int main(int argc, const char* argv[]) {
 
     if (!glfwInit())
-	{
-		return 0;
-	}
+    {
+        return -1;
+    }
  
-	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_SAMPLES, 4);
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    glfwWindowHint(GLFW_COCOA_RETINA_FRAMEBUFFER, GLFW_FALSE);
     GLFWwindow* window = glfwCreateWindow(FRAME_WIDTH, FRAME_HEIGHT, "Vulkan Render Test", NULL, NULL);
 
     if (!window) {
-        return 0;
+        glfwTerminate();
+        return -1;
     }
-	// windows callbacks
-	glfwSetErrorCallback(errorCallback);
-	glfwSetWindowCloseCallback(window, windowCloseCallback);
-	glfwSetWindowSizeCallback(window, windowResizeCallback);
-	glfwSetKeyCallback(window, keyInputCallback);
-	glfwSetCursorPosCallback(window, cursorPositionCallback);
-	glfwSetMouseButtonCallback(window, mouseButtonCallback);
+    // windows callbacks
+    glfwMakeContextCurrent(window);
+    glfwSetErrorCallback(errorCallback);
+    glfwSetWindowCloseCallback(window, windowCloseCallback);
+    glfwSetWindowSizeCallback(window, windowResizeCallback);
+    glfwSetKeyCallback(window, keyInputCallback);
+    glfwSetCursorPosCallback(window, cursorPositionCallback);
+    glfwSetMouseButtonCallback(window, mouseButtonCallback);
 
-	glfwSetInputMode(window, GLFW_STICKY_KEYS, 1);
-	glfwSetInputMode(window, GLFW_STICKY_MOUSE_BUTTONS, 1);
+    glfwSetInputMode(window, GLFW_STICKY_KEYS, 1);
+    glfwSetInputMode(window, GLFW_STICKY_MOUSE_BUTTONS, 1);
     
     // request a Metal layer for rendering via MoltenVK
     NSWindow *win = glfwGetCocoaWindow(window);
@@ -139,18 +143,21 @@ int main(int argc, const char* argv[]) {
     metalLayer.opaque = YES;
     [view setLayer:metalLayer];
 
-	std::unique_ptr<VulkanSurface> surface(new VulkanSurface);
-    
-	const std::vector<const char *> requiredInstanceExtensions = { "VK_MVK_macos_surface", };
+    std::unique_ptr<VulkanSurface> surface(new VulkanSurface);
+    std::vector<const char *> requiredInstanceExtensions = { "VK_KHR_surface", };
 #if defined(VR_VULKAN_VALIDATION)
-    const std::vector<const char *> requiredValidationLayers = {"VK_LAYER_KHRONOS_validation"};
+    std::vector<const char *> requiredValidationLayers = {"VK_LAYER_KHRONOS_validation", };
 #else
-	const std::vector<const char *> requiredValidationLayers = {};
+    std::vector<const char *> requiredValidationLayers = {};
 #endif
-	std::unique_ptr<VulkanRuntime> runtime(new VulkanRuntime(*surface.get(), requiredInstanceExtensions, requiredValidationLayers));
-	// swap chain
-	VulkanSwapChain* swapchain = nullptr;
-	runtime->createSwapChain(swapchain, metalLayer, 1);
+
+#if defined(__APPLE__) || defined(__MACOSX__)
+    requiredInstanceExtensions.emplace_back("VK_MVK_macos_surface");
+#endif
+    std::unique_ptr<VulkanRuntime> runtime(new VulkanRuntime(*surface.get(), requiredInstanceExtensions, requiredValidationLayers));
+    // swap chain
+    VulkanSwapChain* swapchain = nullptr;
+    runtime->createSwapChain(swapchain, metalLayer, 1);
     
     // vertex and fragment shader module
     std::vector<uint8_t> vertexShader = readShaderBinary("triangle_vert.spv");
@@ -270,11 +277,11 @@ int main(int argc, const char* argv[]) {
     // PixelBufferDescriptor pixelBufferObject;
     
     static int64_t frameCount = 0;
-	while (!glfwWindowShouldClose(window))
+    while (!glfwWindowShouldClose(window))
     {
         glfwPollEvents();
         
-		static float currentTime = 0.0;
+        static float currentTime = 0.0;
         runtime->beginFrame(swapchain, (int64_t)currentTime, frameCount);
         // update vertex buffer and index buffer
         runtime->updateBufferObject(positionBufferObject, posDesc, 0);

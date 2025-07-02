@@ -5,64 +5,136 @@
 #include "stb_image_write.h"
 #endif
 
+
 namespace VR {
 namespace backend {
 
-VulkanRuntime::VulkanRuntime(VulkanSurface& surface, const std::vector<const char *> &ppRequiredExtensions, const std::vector<const char *> &ppRequiredValidationLayers) :
+#if defined(VR_VULKAN_VALIDATION)
+const std::string DESIRED_LAYERS[] = {
+        "VK_LAYER_KHRONOS_validation",
+#if defined(VR_VULKAN_DUMP_API)
+        "VK_LAYER_LUNARG_api_dump",
+#endif
+#if defined(VR_ENABLE_RENDERDOC)
+        "VK_LAYER_RENDERDOC_Capture",
+#endif
+};
+
+std::vector<const char*> getEnabledLayers() {
+    constexpr size_t kMaxEnabledLayersCount = sizeof(DESIRED_LAYERS) / sizeof(DESIRED_LAYERS[0]);
+
+    uint32_t availableLayerCount;
+    CALL_VK(vkEnumerateInstanceLayerProperties(&availableLayerCount, nullptr));
+
+    std::vector<VkLayerProperties> availableLayers(availableLayerCount);
+    CALL_VK(vkEnumerateInstanceLayerProperties(&availableLayerCount, availableLayers.data()));
+
+    auto enabledLayers = std::vector<const char*>(kMaxEnabledLayersCount);
+    uint32_t enabledLayerCount = 0;
+    for (auto const& desired: DESIRED_LAYERS) {
+        for (const VkLayerProperties& layer: availableLayers) {
+            const std::string availableLayer(layer.layerName);
+            if (availableLayer == desired && enabledLayerCount <= kMaxEnabledLayersCount) {
+                enabledLayers[enabledLayerCount++] = desired.data();
+                break;
+            }
+        }
+    }
+    return enabledLayers;
+}
+#endif
+
+VulkanRuntime::VulkanRuntime(VulkanSurface& surface, std::vector<const char *> &ppRequiredExtensions, std::vector<const char *> &ppRequiredValidationLayers) :
                             mSurface(surface), mMemoryPool(mContext), mFramebufferCache(mContext), mSamplerCache(mContext) {
 
     mContext.rasterState = mPipelineCache.getDefaultRasterState();
     // init vulkan functions
     VR_VK_ASSERT(InitVulkan(), "Unable to load vulkan functions.");
+    VkInstanceCreateInfo instanceInfo = {};
 
     // extensions
-    uint32_t instanceExtensionCount;
-	CALL_VK(vkEnumerateInstanceExtensionProperties(nullptr, &instanceExtensionCount, nullptr));
+    uint32_t availableInstanceExtensionCount;
+    CALL_VK(vkEnumerateInstanceExtensionProperties(nullptr, &availableInstanceExtensionCount, nullptr));
 
-	std::vector<VkExtensionProperties> instanceExtensions(instanceExtensionCount);
-	CALL_VK(vkEnumerateInstanceExtensionProperties(nullptr, &instanceExtensionCount, instanceExtensions.data()));
-            
-    const char* ppEnabledExtensions[4];
+    std::vector<VkExtensionProperties> availableInstanceExtensions(availableInstanceExtensionCount);
+    CALL_VK(vkEnumerateInstanceExtensionProperties(nullptr, &availableInstanceExtensionCount, availableInstanceExtensions.data()));
+    
+    static constexpr uint32_t MAX_INSTANCE_EXTENSION_COUNT = 8;
+    const char* ppEnabledInstanceExtensions[MAX_INSTANCE_EXTENSION_COUNT];
     uint32_t enabledExtensionCount = 0;
+    
+    bool validationFeaturesSupported = false;
+    
+#if defined(VR_ENABLE_PORTABILITY)
+	ppEnabledInstanceExtensions[enabledExtensionCount++] = VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME;
+	bool portabilityEnumerationAvailable = false;
+	if (std::any_of(availableInstanceExtensions.begin(),
+	                availableInstanceExtensions.end(),
+	                [](VkExtensionProperties const &extension) { return strcmp(extension.extensionName, VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) == 0; }))
+	{
+		ppEnabledInstanceExtensions[enabledExtensionCount++] = VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME;
+		portabilityEnumerationAvailable = true;
+	}
+#endif
 
-    ppEnabledExtensions[enabledExtensionCount++] = "VK_KHR_surface";
-    ppEnabledExtensions[enabledExtensionCount++] = "VK_KHR_get_physical_device_properties2";
-
-    for (uint32_t i = 0; i < ppRequiredExtensions.size(); ++i) {
-        ppEnabledExtensions[enabledExtensionCount++] = ppRequiredExtensions[i];
-    }
-            
 #if defined(VR_VULKAN_VALIDATION)
     // validation extension properties
-    uint32_t validationExtensionCount;
-    CALL_VK(vkEnumerateInstanceExtensionProperties("VK_LAYER_KHRONOS_validation", &validationExtensionCount, nullptr));
+    auto const enabledLayers = getEnabledLayers();
+    if (!enabledLayers.empty()) {
+        // Check if VK_EXT_validation_features is supported.
+        uint32_t availableValidationExtensionCount;
+        CALL_VK(vkEnumerateInstanceExtensionProperties("VK_LAYER_KHRONOS_validation", &availableValidationExtensionCount, nullptr));
 
-    std::vector<VkExtensionProperties> validationExtensions(validationExtensionCount);
-    CALL_VK(vkEnumerateInstanceExtensionProperties("VK_LAYER_KHRONOS_validation", &validationExtensionCount, validationExtensions.data()));
-            
-    ppEnabledExtensions[enabledExtensionCount++] = "VK_EXT_debug_utils";
-    ppEnabledExtensions[enabledExtensionCount++] = "VK_EXT_debug_report";
+        std::vector<VkExtensionProperties> availableValidationExtensions(availableValidationExtensionCount);
+        CALL_VK(vkEnumerateInstanceExtensionProperties("VK_LAYER_KHRONOS_validation", &availableValidationExtensionCount, availableValidationExtensions.data()));
+        for (auto const& extProps: availableValidationExtensions) {
+            if (!strcmp(extProps.extensionName, VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME)) {
+                validationFeaturesSupported = true;
+                break;
+            }
+        }
+        instanceInfo.enabledLayerCount = uint32_t(enabledLayers.size());
+        instanceInfo.ppEnabledLayerNames = enabledLayers.data();
+    }
 #endif
+
+    if (validationFeaturesSupported) {
+        ppEnabledInstanceExtensions[enabledExtensionCount++] = VK_EXT_VALIDATION_FEATURES_EXTENSION_NAME;
+    }
+
+    // Request platform-specific extensions.
+    for (uint32_t i = 0; i < ppRequiredExtensions.size(); ++i) {
+        VR_ASSERT(enabledExtensionCount < MAX_INSTANCE_EXTENSION_COUNT);
+        ppEnabledInstanceExtensions[enabledExtensionCount++] = ppRequiredExtensions[i];
+    }
 
     // layers
     uint32_t instanceLayerCount;
-	CALL_VK(vkEnumerateInstanceLayerProperties(&instanceLayerCount, nullptr));
+    CALL_VK(vkEnumerateInstanceLayerProperties(&instanceLayerCount, nullptr));
 
-	std::vector<VkLayerProperties> supportedValidationLayers(instanceLayerCount);
-	CALL_VK(vkEnumerateInstanceLayerProperties(&instanceLayerCount, supportedValidationLayers.data()));
+    std::vector<VkLayerProperties> supportedValidationLayers(instanceLayerCount);
+    CALL_VK(vkEnumerateInstanceLayerProperties(&instanceLayerCount, supportedValidationLayers.data()));
+    VR_PRINT("Supported Layers:\n");
+    for (const auto& layer : supportedValidationLayers) {
+        VR_PRINT("%s\n", layer.layerName);
+    }
 
     // vulkan instance
     VkApplicationInfo appInfo = {VK_STRUCTURE_TYPE_APPLICATION_INFO};
     appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.apiVersion = VK_MAKE_VERSION(VK_REQUIRED_VERSION_MAJOR, VK_REQUIRED_VERSION_MINOR, 0);
+    appInfo.apiVersion = VK_MAKE_API_VERSION(0, VK_REQUIRED_VERSION_MAJOR, VK_REQUIRED_VERSION_MINOR, 0);;
 
-    VkInstanceCreateInfo instanceInfo = {};
     instanceInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     instanceInfo.pApplicationInfo = &appInfo;
+#if defined(VR_ENABLE_PORTABILITY)
+    if (portabilityEnumerationAvailable) {
+        instanceInfo.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    }
+#endif    
     instanceInfo.enabledExtensionCount = enabledExtensionCount;
-    instanceInfo.ppEnabledExtensionNames = ppEnabledExtensions;
+    instanceInfo.ppEnabledExtensionNames = ppEnabledInstanceExtensions;
     instanceInfo.enabledLayerCount = uint32_t(ppRequiredValidationLayers.size());
-	instanceInfo.ppEnabledLayerNames = ppRequiredValidationLayers.data();
+    instanceInfo.ppEnabledLayerNames = ppRequiredValidationLayers.data();
 
     VkResult result = vkCreateInstance(&instanceInfo, VKALLOC, &mContext.instance);
     VR_VK_ASSERT(result == VK_SUCCESS, "Unable to create Vulkan instance.");
